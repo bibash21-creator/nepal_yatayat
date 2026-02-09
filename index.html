@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bus Tracker with Detailed Recommendations</title>
+
+<!-- Leaflet CSS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<style>
+  #map { height: 100vh; width: 100%; }
+
+  /* User marker */
+  .user-marker {
+    width: 20px;
+    height: 20px;
+    background-color: red;
+    border-radius: 50%;
+    border: 2px solid white;
+    text-align: center;
+    line-height: 20px;
+    font-size: 12px;
+    color: white;
+  }
+
+  /* Bus marker */
+  .bus-marker {
+    width: 30px;
+    height: 20px;
+    background-color: blue;
+    border-radius: 5px;
+    border: 2px solid white;
+    text-align: center;
+    line-height: 20px;
+    font-size: 14px;
+    color: white;
+    opacity: 0.5; /* dim others by default */
+  }
+
+  .left-btn {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    z-index: 999;
+    background: linear-gradient(135deg,#007bff,#00d4ff);
+    color:white; border:none; padding:12px 18px;
+    border-radius:12px; cursor:pointer; font-weight:600;
+    box-shadow:0 4px 15px rgba(0,0,0,0.25);
+    transition: all 0.3s ease;
+  }
+  .left-btn:hover{ transform:scale(1.05); box-shadow:0 6px 20px rgba(0,0,0,0.35); }
+
+
+   .right-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 999;
+    background: linear-gradient(135deg,#ff7b00,#ffdd00);
+    color:white; border:none; padding:12px 18px;
+    border-radius:12px; cursor:pointer; font-weight:600;
+    box-shadow:0 4px 15px rgba(0,0,0,0.25);
+    transition: all 0.3s ease;
+  }
+  .right-btn:hover{ transform:scale(1.05); box-shadow:0 6px 20px rgba(0,0,0,0.35); }
+  /* Highlighted bus */
+  .highlighted-bus {
+    width: 50px !important;
+    height: 35px !important;
+    background-color: orange !important;
+    border: 3px solid yellow !important;
+    opacity: 1 !important;
+    font-size: 18px !important;
+  }
+
+  /* Button container */
+  #controls {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: white;
+    padding: 10px;
+    border-radius: 8px;
+    box-shadow: 0 0 6px rgba(0,0,0,0.3);
+  }
+
+  .right-btn {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    z-index: 999;
+    background: linear-gradient(135deg,#ff7b00,#ffdd00);
+    color:white; border:none; padding:12px 18px;
+    border-radius:12px; cursor:pointer; font-weight:600;
+    box-shadow:0 4px 15px rgba(0,0,0,0.25);
+    transition: all 0.3s ease;
+  }
+  .right-btn:hover{ transform:scale(1.05); box-shadow:0 6px 20px rgba(0,0,0,0.35); }
+</style>
+</head>
+<body>
+
+<div id="controls">
+  <button id="locateUser" class="left-btn">Find My Location</button>
+  <button id="recommendBus" class="right-btn">Recommend Best Bus</button>
+</div>
+
+<div id="map"></div>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-gpx/1.7.0/gpx.min.js"></script>
+
+<script>
+  var map = L.map('map').setView([27.669, 85.357], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  var routeCoordinates = [];
+  var busStops = [];
+  var buses = [];
+  var userMarker = null;
+  var userLocation = null;
+  var routeLine = null;
+
+  // Dummy bus info
+  const busInfo = [
+      {name:"Bus 1", busImg:"https://via.placeholder.com/50x50?text=Bus1", driverImg:"https://via.placeholder.com/50?text=Driver1", conductorImg:"https://via.placeholder.com/50?text=Cond1", rating:4.5, safety:5, year:2018, efficiency:"High"},
+      {name:"Bus 2", busImg:"https://via.placeholder.com/50x50?text=Bus2", driverImg:"https://via.placeholder.com/50?text=Driver2", conductorImg:"https://via.placeholder.com/50?text=Cond2", rating:4.0, safety:4, year:2017, efficiency:"Medium"},
+      {name:"Bus 3", busImg:"https://via.placeholder.com/50x50?text=Bus3", driverImg:"https://via.placeholder.com/50?text=Driver3", conductorImg:"https://via.placeholder.com/50?text=Cond3", rating:3.8, safety:4, year:2016, efficiency:"Medium"},
+      {name:"Bus 4", busImg:"https://via.placeholder.com/50x50?text=Bus4", driverImg:"https://via.placeholder.com/50?text=Driver4", conductorImg:"https://via.placeholder.com/50?text=Cond4", rating:4.2, safety:5, year:2019, efficiency:"High"},
+      {name:"Bus 5", busImg:"https://via.placeholder.com/50x50?text=Bus5", driverImg:"https://via.placeholder.com/50?text=Driver5", conductorImg:"https://via.placeholder.com/50?text=Cond5", rating:4.8, safety:5, year:2020, efficiency:"Very High"}
+  ];
+
+  // Load GPX route
+  new L.GPX("route.gpx", {async:true, polyline_options:{color:'blue',weight:4,opacity:0.7}, marker_options:{startIconUrl:'',endIconUrl:'',shadowUrl:''}})
+  .on('loaded', function(e){
+      map.fitBounds(e.target.getBounds());
+      e.target.getLayers().forEach(layer=>{
+          if(layer instanceof L.Polyline) routeCoordinates=layer.getLatLngs();
+          if(layer instanceof L.Marker) busStops.push(layer.getLatLng());
+      });
+      startBusAnimation();
+  }).addTo(map);
+
+  // Start 5 buses
+  function startBusAnimation(){
+      var spacing = 10;
+      for(let i=0;i<5;i++){
+          let busIcon=L.divIcon({className:'bus-marker', html:'🚌'});
+          let busMarker=L.marker(routeCoordinates[0], {icon:busIcon}).addTo(map);
+          buses.push({marker:busMarker, index:-i*spacing, paused:false, pauseCounter:0, info:busInfo[i]});
+      }
+
+      setInterval(()=>{
+          buses.forEach(bus=>{
+              if(bus.paused){ bus.pauseCounter--; if(bus.pauseCounter<=0) bus.paused=false; return; }
+              bus.index=(bus.index+1)%routeCoordinates.length;
+              bus.marker.setLatLng(routeCoordinates[Math.max(bus.index,0)]);
+              busStops.forEach(stop=>{
+                  if(bus.marker.getLatLng().distanceTo(stop)<5){ bus.paused=true; bus.pauseCounter=25; }
+              });
+          });
+      }, 400); // slower movement
+  }
+
+  // User location
+  document.getElementById('locateUser').addEventListener('click', function(){
+      map.locate({setView:true, maxZoom:16});
+  });
+
+  map.on('locationfound', function(e){
+      userLocation=e.latlng;
+      if(userMarker) map.removeLayer(userMarker);
+      let userIcon=L.divIcon({className:'user-marker', html:'U'});
+      userMarker=L.marker(userLocation,{icon:userIcon}).addTo(map);
+  });
+
+  // Recommend best bus
+  document.getElementById('recommendBus').addEventListener('click', function(){
+      if(!userLocation){ alert('Allow location first'); return; }
+      let nearestBus=null; let minDist=Infinity;
+
+      buses.forEach(bus=>{
+          bus.marker.getElement().classList.remove('highlighted-bus');
+          bus.marker.setOpacity(0.5);
+          let dist=userLocation.distanceTo(bus.marker.getLatLng());
+          if(dist<minDist){ minDist=dist; nearestBus=bus; }
+      });
+
+      if(nearestBus){
+          nearestBus.marker.getElement().classList.add('highlighted-bus');
+          nearestBus.marker.setOpacity(1);
+
+          // Draw route line
+          if(routeLine) map.removeLayer(routeLine);
+          routeLine=L.polyline([userLocation, nearestBus.marker.getLatLng()], {color:'green', weight:4, dashArray:'5,10'}).addTo(map);
+
+          // Popup with bus info
+          let info = nearestBus.info;
+          let htmlContent=`<div class="bus-popup">
+            <img src="${info.busImg}" alt="Bus"><strong>${info.name}</strong><br>
+            Driver: <img src="${info.driverImg}"><br>
+            Conductor: <img src="${info.conductorImg}"><br>
+            Rating: ${info.rating} ⭐<br>
+            Safety: ${info.safety}/5<br>
+            Year Built: ${info.year}<br>
+            Efficiency: ${info.efficiency}
+          </div>`;
+          nearestBus.marker.bindPopup(htmlContent).openPopup();
+      }
+  });
+
+
+  // User location with permission prompt
+document.getElementById('locateUser').addEventListener('click', function(){
+    if(confirm("Allow this website to access your location to recommend the nearest bus?")) {
+        map.locate({setView: true, maxZoom: 16});
+    } else {
+        alert("Location access denied. You won't be able to get bus recommendations.");
+    }
+});
+
+// When location is found
+map.on('locationfound', function(e){
+    userLocation = e.latlng;
+    if(userMarker) map.removeLayer(userMarker);
+    let userIcon = L.divIcon({className: 'user-marker', html: 'U'});
+    userMarker = L.marker(userLocation, {icon: userIcon}).addTo(map);
+});
+
+// If location fails (user denies or error)
+map.on('locationerror', function(e){
+    alert("Failed to get location: " + e.message);
+});
+
+
+</script>
+</body>
+</html>
